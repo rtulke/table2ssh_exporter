@@ -3,7 +3,7 @@
 A Python tool to extract hostname, IP, port and user data from various table formats (Markdown, CSV, delimited text) and export to TXT, CSV, or SSH config files with flexible template support.
 
 **Why?**
-I had the problem that I didn't always want to write my SSH config by hand. So I decided to write this tool, which helps you generate an SSH client config file from a Markdown, CSV, or TXT file. Now I just have to maintain my server list in git and I can create an SSH config from it. That saves me some work. However, you could just as easily export your database and transfer it to this script to create an SSH configuration.
+I had the problem that I didn't always want to write my SSH config by hand. So I decided to write this tool, which helps you generate an SSH client config file from a Markdown Table, CSV, or TXT file. Now I just have to maintain my server list in git and I can create an SSH config from it. That saves me some work. However, you could just as easily export your database and transfer it to this script to create an SSH configuration.
 
 
 ## Features
