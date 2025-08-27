@@ -9,6 +9,7 @@ import configparser
 import csv
 import os
 import re
+import ssl
 import sys
 from pathlib import Path
 from urllib.parse import urlparse
@@ -48,7 +49,8 @@ def load_ssh_template(template_file=None):
     Returns:
         tuple: (global_settings dict, host_defaults dict)
     """
-    config = configparser.ConfigParser()
+    # Disable interpolation to handle SSH % variables
+    config = configparser.ConfigParser(interpolation=None)
     
     if template_file:
         # Use specified template file
@@ -109,12 +111,13 @@ def get_builtin_defaults():
     return global_settings, host_defaults
 
 
-def read_input_source(source):
+def read_input_source(source, insecure=False):
     """
     Read content from URL or file path.
     
     Args:
         source (str): URL or file path
+        insecure (bool): Allow insecure SSL connections
         
     Returns:
         str: Content of the source
@@ -126,8 +129,16 @@ def read_input_source(source):
         # Check if source is URL
         parsed = urlparse(source)
         if parsed.scheme in ('http', 'https'):
-            with urlopen(source) as response:
-                return response.read().decode('utf-8')
+            if insecure and parsed.scheme == 'https':
+                # Create unverified SSL context for self-signed certificates
+                ssl_context = ssl.create_default_context()
+                ssl_context.check_hostname = False
+                ssl_context.verify_mode = ssl.CERT_NONE
+                with urlopen(source, context=ssl_context) as response:
+                    return response.read().decode('utf-8')
+            else:
+                with urlopen(source) as response:
+                    return response.read().decode('utf-8')
         else:
             # Treat as file path
             file_path = Path(source)
@@ -138,7 +149,10 @@ def read_input_source(source):
             
     except URLError as e:
         error_msg = str(e)
-        if 'nodename nor servname provided' in error_msg or 'Name or service not known' in error_msg:
+        if 'CERTIFICATE_VERIFY_FAILED' in error_msg:
+            print(f"Error: SSL certificate verification failed for '{source}'", file=sys.stderr)
+            print("  Try using --insecure flag to ignore SSL certificate errors", file=sys.stderr)
+        elif 'nodename nor servname provided' in error_msg or 'Name or service not known' in error_msg:
             print(f"Error: Cannot resolve hostname in URL '{source}'", file=sys.stderr)
             print("  This might be an internal/private server not accessible from your network", file=sys.stderr)
         else:
@@ -555,7 +569,40 @@ def export_to_csv(data, output_file, has_port, has_user):
         sys.exit(1)
 
 
-def export_to_ssh_config(data, output_file, cli_user, cli_port, cli_identity, ssh_template):
+def normalize_ssh_key(key):
+    """
+    Normalize SSH configuration key to proper case format.
+    
+    Args:
+        key (str): SSH config key
+        
+    Returns:
+        str: Properly formatted SSH key
+    """
+    # Common SSH keys with proper capitalization
+    ssh_key_mapping = {
+        'controlmaster': 'ControlMaster',
+        'controlpath': 'ControlPath', 
+        'controlpersist': 'ControlPersist',
+        'serveraliveinterval': 'ServerAliveInterval',
+        'serveralivecountmax': 'ServerAliveCountMax',
+        'stricthostkeychecking': 'StrictHostKeyChecking',
+        'userknownhostsfile': 'UserKnownHostsFile',
+        'connecttimeout': 'ConnectTimeout',
+        'compression': 'Compression',
+        'identityfile': 'IdentityFile',
+        'identitiesonly': 'IdentitiesOnly',
+        'passwordauthentication': 'PasswordAuthentication',
+        'pubkeyauthentication': 'PubkeyAuthentication',
+        'hostname': 'Hostname',
+        'user': 'User',
+        'port': 'Port',
+        'loglevel': 'LogLevel',
+        'forwardagent': 'ForwardAgent',
+        'forwardx11': 'ForwardX11'
+    }
+    
+    return ssh_key_mapping.get(key.lower(), key)
     """
     Export data to SSH config format.
     
@@ -647,6 +694,7 @@ Examples:
   %(prog)s -i servers.md --csv inventory.csv
   %(prog)s -i inventory.csv --ssh lab.conf --user admin
   %(prog)s -i "host1,10.1.1.1;host2,10.1.1.2" --txt hosts.txt
+  %(prog)s -i https://internal.company.com/servers.md --csv hosts.csv --insecure
         """
     )
     
@@ -696,6 +744,12 @@ Examples:
         help='SSH config template file (INI format)'
     )
     
+    parser.add_argument(
+        '--insecure',
+        action='store_true',
+        help='Allow insecure SSL connections (ignore certificate errors)'
+    )
+    
     args = parser.parse_args()
     
     # Validate arguments
@@ -703,7 +757,9 @@ Examples:
     
     # Read input source
     print(f"Reading from: {args.input}")
-    content = read_input_source(args.input)
+    if args.insecure:
+        print("Warning: SSL certificate verification disabled")
+    content = read_input_source(args.input, args.insecure)
     
     # Parse input data
     data, has_port, has_user = parse_input_data(content, args.input)
