@@ -1,4 +1,3 @@
-# ./tools/tssh.py
 #!/usr/bin/env python3
 """
 Table SSH Exporter (tssh)
