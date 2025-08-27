@@ -39,25 +39,67 @@ def find_config_files():
     return found_configs
 
 
+def remove_duplicate_ssh_keys(global_section, host_defaults):
+    """
+    Remove duplicate SSH keys between global and host sections.
+    
+    Args:
+        global_section (str): Global SSH settings text
+        host_defaults (str): Host defaults text
+        
+    Returns:
+        tuple: (global_section, cleaned_host_defaults)
+    """
+    if not global_section or not host_defaults:
+        return global_section, host_defaults
+    
+    # Extract keys from global section
+    global_keys = set()
+    for line in global_section.splitlines():
+        line = line.strip()
+        if line and ' ' in line:
+            key = line.split(' ', 1)[0].lower()
+            global_keys.add(key)
+    
+    # Filter host defaults to remove duplicates
+    cleaned_host_defaults = ""
+    removed_keys = []
+    
+    for line in host_defaults.splitlines():
+        line_stripped = line.strip()
+        if line_stripped and ' ' in line_stripped:
+            key = line_stripped.split(' ', 1)[0].lower()
+            if key in global_keys:
+                removed_keys.append(key)
+                continue  # Skip duplicate key
+        
+        cleaned_host_defaults += line + "\n"
+    
+    # Report removed duplicates
+    if removed_keys:
+        print(f"Removed duplicate keys from host defaults: {', '.join(removed_keys)}")
+    
+    return global_section, cleaned_host_defaults
+
+
 def load_ssh_template(template_file=None):
     """
-    Load SSH template configuration.
+    Load SSH template configuration as text sections.
     
     Args:
         template_file (str): Optional specific template file path
         
     Returns:
-        tuple: (global_settings dict, host_defaults dict)
+        tuple: (global_section_text, host_defaults_text)
     """
-    # Disable interpolation to handle SSH % variables
-    config = configparser.ConfigParser(interpolation=None)
+    template_content = ""
     
     if template_file:
         # Use specified template file
         if not Path(template_file).exists():
             print(f"Error: Template file '{template_file}' not found", file=sys.stderr)
             sys.exit(1)
-        config.read(template_file)
+        template_content = Path(template_file).read_text(encoding='utf-8')
     else:
         # Auto-discover config files
         found_configs = find_config_files()
@@ -69,46 +111,76 @@ def load_ssh_template(template_file=None):
             print("Please specify which config to use with --ssh-template", file=sys.stderr)
             sys.exit(1)
         elif len(found_configs) == 1:
-            config.read(found_configs[0])
+            template_content = found_configs[0].read_text(encoding='utf-8')
             print(f"Using config: {found_configs[0]}")
         else:
             print("No config file found, using built-in defaults")
-            return get_builtin_defaults()
+            return get_builtin_defaults_text()
     
-    # Parse config sections
-    global_settings = dict(config['global']) if 'global' in config else {}
-    host_defaults = dict(config['host_defaults']) if 'host_defaults' in config else {}
+    # Parse sections manually
+    global_section = ""
+    host_defaults = ""
+    current_section = None
     
-    return global_settings, host_defaults
+    for line in template_content.splitlines():
+        line_stripped = line.strip()
+        
+        # Skip comments and empty lines
+        if not line_stripped or line_stripped.startswith('#'):
+            continue
+            
+        # Check for section headers
+        if line_stripped == '[global]':
+            current_section = 'global'
+            continue
+        elif line_stripped == '[host_defaults]':
+            current_section = 'host_defaults'
+            continue
+        elif line_stripped.startswith('['):
+            current_section = None
+            continue
+        
+        # Parse key-value pairs
+        if '=' in line_stripped and current_section:
+            key, value = line_stripped.split('=', 1)
+            key = key.strip()
+            value = value.strip()
+            
+            if current_section == 'global':
+                global_section += f"    {key} {value}\n"
+            elif current_section == 'host_defaults':
+                host_defaults += f"    {key} {value}\n"
+    
+    # Remove duplicate keys between global and host sections
+    global_section, host_defaults = remove_duplicate_ssh_keys(global_section, host_defaults)
+    
+    return global_section, host_defaults
 
 
-def get_builtin_defaults():
+def get_builtin_defaults_text():
     """
-    Get built-in default SSH configuration.
+    Get built-in default SSH configuration as text sections.
     
     Returns:
-        tuple: (global_settings dict, host_defaults dict)
+        tuple: (global_section_text, host_defaults_text)
     """
-    global_settings = {
-        'ControlMaster': 'auto',
-        'ControlPath': '~/.ssh/sockets/%r@%h-%p',
-        'ControlPersist': '600',
-        'ServerAliveInterval': '60',
-        'ServerAliveCountMax': '3',
-        'StrictHostKeyChecking': 'no',
-        'UserKnownHostsFile': '/dev/null',
-        'ConnectTimeout': '10',
-        'Compression': 'yes'
-    }
+    global_section = """    ControlMaster auto
+    ControlPath ~/.ssh/sockets/%r@%h-%p
+    ControlPersist 600
+    ServerAliveInterval 60
+    ServerAliveCountMax 3
+    StrictHostKeyChecking no
+    UserKnownHostsFile /dev/null
+    ConnectTimeout 10
+    Compression yes
+"""
     
-    host_defaults = {
-        'IdentityFile': '~/.ssh/id_rsa',
-        'IdentitiesOnly': 'yes',
-        'PasswordAuthentication': 'no',
-        'PubkeyAuthentication': 'yes'
-    }
+    host_defaults = """    IdentitiesOnly yes
+    PasswordAuthentication no
+    PubkeyAuthentication yes
+"""
     
-    return global_settings, host_defaults
+    return global_section, host_defaults
 
 
 def read_input_source(source, insecure=False):
@@ -603,6 +675,9 @@ def normalize_ssh_key(key):
     }
     
     return ssh_key_mapping.get(key.lower(), key)
+
+
+def export_to_ssh_config(data, output_file, cli_user, cli_port, cli_identity, ssh_template):
     """
     Export data to SSH config format.
     
@@ -615,16 +690,15 @@ def normalize_ssh_key(key):
         ssh_template (str): SSH template file path
     """
     try:
-        # Load SSH template
-        global_settings, host_defaults = load_ssh_template(ssh_template)
+        # Load SSH template as text sections
+        global_section, host_defaults = load_ssh_template(ssh_template)
         
         with open(output_file, 'w', encoding='utf-8') as f:
             # Write global settings
-            if global_settings:
+            if global_section and global_section.strip():
                 f.write("# Global SSH settings\n")
                 f.write("Host *\n")
-                for key, value in global_settings.items():
-                    f.write(f"    {key} {value}\n")
+                f.write(global_section)
                 f.write("\n")
             
             # Write host configurations
@@ -633,31 +707,32 @@ def normalize_ssh_key(key):
                 hostname = entry['hostname']
                 ip = entry['ip']
                 
-                # Determine values with precedence: CLI > Table > Template > Script Default
-                user = cli_user or entry.get('user', '') or host_defaults.get('User', '')
-                port = cli_port or entry.get('port', '') or host_defaults.get('Port', '')
-                identity_file = cli_identity or host_defaults.get('IdentityFile', '~/.ssh/id_rsa')
-                
                 # Extract short hostname (part before first dot)
                 short_hostname = hostname.split('.')[0]
                 
                 f.write(f"Host {hostname} {short_hostname}\n")
                 f.write(f"    Hostname {ip}\n")
                 
-                if user:
-                    f.write(f"    User {user}\n")
+                # CLI parameters override everything
+                if cli_user:
+                    f.write(f"    User {cli_user}\n")
+                elif entry.get('user'):
+                    f.write(f"    User {entry['user']}\n")
                 
-                if port:
-                    f.write(f"    Port {port}\n")
+                if cli_port:
+                    f.write(f"    Port {cli_port}\n")
+                elif entry.get('port'):
+                    f.write(f"    Port {entry['port']}\n")
                 
+                # Identity file: CLI > template default
+                identity_file = cli_identity or '~/.ssh/id_rsa'
                 f.write(f"    IdentityFile {identity_file}\n")
                 
-                # Add other host defaults from template
-                for key, value in host_defaults.items():
-                    if key not in ['User', 'Port', 'IdentityFile']:
-                        f.write(f"    {key} {value}\n")
+                # Add host defaults from template (preserve original formatting)
+                if host_defaults and host_defaults.strip():
+                    f.write(host_defaults)
                 
-                f.write(f"\n")
+                f.write("\n")
         
         print(f"Exported {len(data)} entries to {output_file}")
     except Exception as e:
