@@ -92,7 +92,7 @@ The tool automatically detects columns using flexible, case-insensitive pattern 
 **User columns:**
 `user`, `username`, `login`, `account`, `admin`, `ssh_user`, `benutzer`, etc.
 
-Here is a simple example of a Markdown table. However, the tool includes automatic header pattern detection where hostname can also be called "servername" or "server", and "user" can also be called "account". The spelling (upper/lower case) does not matter. If your patterns are missing, you can simply add them to the code in the patterns. For example, if you want to use a different language, currently only common English-language patterns are recognized.
+However, the tool includes automatic header pattern detection where hostname can also be called "servername" or "server", and "user" can also be called "account". The spelling (upper/lower case) does not matter. If your patterns are missing, you can simply add them to the code in the patterns. For example, if you want to use a different language, currently only common English-language patterns are recognized.
 
 ## SSH Configuration Templates
 
