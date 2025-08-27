@@ -2,9 +2,6 @@
 """
 Table SSH Exporter (tssh)
 Exports hostname, IP, port and user data from various table formats to TXT, CSV or SSH config.
-
-Author: Robert Tulke rt@debian.sh
-Licence: MIT
 """
 
 import argparse
@@ -140,7 +137,12 @@ def read_input_source(source):
             return file_path.read_text(encoding='utf-8')
             
     except URLError as e:
-        print(f"Error reading URL '{source}': {e}", file=sys.stderr)
+        error_msg = str(e)
+        if 'nodename nor servname provided' in error_msg or 'Name or service not known' in error_msg:
+            print(f"Error: Cannot resolve hostname in URL '{source}'", file=sys.stderr)
+            print("  This might be an internal/private server not accessible from your network", file=sys.stderr)
+        else:
+            print(f"Error reading URL '{source}': {e}", file=sys.stderr)
         sys.exit(1)
     except Exception as e:
         print(f"Error reading source '{source}': {e}", file=sys.stderr)
